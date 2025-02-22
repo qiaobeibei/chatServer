@@ -1,0 +1,14 @@
+# 忽略 .vs 文件夹
+ChatServer/.vs/
+GateServer/.vs/
+StatusServer/.vs/
+# 忽略 Debug 文件夹
+
+ChatServer/Debug/
+GateServer/Debug/
+StatusServer/Debug/
+# 忽略 x64 文件夹
+
+ChatServer/x64/
+GateServer/x64/
+StatusServer/x64/
