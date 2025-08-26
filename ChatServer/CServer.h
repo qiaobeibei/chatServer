@@ -12,6 +12,7 @@ public:
 	CServer(boost::asio::io_context& io_context, short port);
 	~CServer();
 	void ClearSession(std::string);
+	std::shared_ptr<CSession> FindSession(const std::string& uuid);
 private:
 	void HandleAccept(shared_ptr<CSession>, const boost::system::error_code & error);
 	void StartAccept();
@@ -21,4 +22,7 @@ private:
 	std::map<std::string, shared_ptr<CSession>> _sessions;
 	std::mutex _mutex;
 };
+
+// 全局当前服务器实例指针（在 main 中赋值）
+extern CServer* g_server;
 

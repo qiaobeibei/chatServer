@@ -2,10 +2,6 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast.hpp>
 #include <boost/asio.hpp>
-#include <boost/filesystem.hpp>
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/ini_parser.hpp>
-#include <boost/filesystem.hpp> 
 #include <memory>
 #include <iostream>
 #include <unordered_map>
@@ -42,8 +38,8 @@ enum ErrorCodes {
 	UserExist = 1005,       //用户已经存在
 	PasswdErr = 1006,    //密码错误
 	EmailNotMatch = 1007,  //邮箱不匹配
-	PasswdUpFailed = 1008,  //修改密码失败
-	PasswdInvalid = 1009,   //密码输入错误
+	PasswdUpFailed = 1008,  //更新密码失败
+	PasswdInvalid = 1009,   //密码更新失败
 	TokenInvalid = 1010,   //Token失效
 	UidInvalid = 1011,  //uid无效
 };

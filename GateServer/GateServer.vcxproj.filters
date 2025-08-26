@@ -33,22 +33,22 @@
     <ClCompile Include="message.pb.cc">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="VarifyGrpcClient.cpp">
+    <ClCompile Include="VerifyGrpcClient.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="ConfigMgr.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="AsioIOServicePool.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="RedisMgr.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="MySqlDao.cpp">
+    <ClCompile Include="MysqlMgr.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="MysqlMgr.cpp">
+    <ClCompile Include="AsioIOServicePool.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="MysqlDao.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="StatusGrpcClient.cpp">
@@ -59,16 +59,16 @@
     <ClInclude Include="CServer.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="HttpConnection.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="const.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="Singleton.h">
+    <ClInclude Include="HttpConnection.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="LogicSystem.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Singleton.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="message.grpc.pb.h">
@@ -77,22 +77,22 @@
     <ClInclude Include="message.pb.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="VarifyGrpcClient.h">
+    <ClInclude Include="VerifyGrpcClient.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="ConfigMgr.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="AsioIOServicePool.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="RedisMgr.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="MySqlDao.h">
+    <ClInclude Include="MysqlMgr.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="MysqlMgr.h">
+    <ClInclude Include="AsioIOServicePool.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="MysqlDao.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="StatusGrpcClient.h">
@@ -100,7 +100,6 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <None Include="message.proto" />
     <None Include="config.ini" />
   </ItemGroup>
 </Project>

@@ -4,27 +4,27 @@
 
 enum ErrorCodes {
 	Success = 0,
-	Error_Json = 1001,  //Json½âÎö´íÎó
-	RPCFailed = 1002,  //RPCÇëÇó´íÎó
-	VarifyExpired = 1003, //ÑéÖ¤Âë¹ýÆÚ
-	VarifyCodeErr = 1004, //ÑéÖ¤Âë´íÎó
-	UserExist = 1005,       //ÓÃ»§ÒÑ¾­´æÔÚ
-	PasswdErr = 1006,    //ÃÜÂë´íÎó
-	EmailNotMatch = 1007,  //ÓÊÏä²»Æ¥Åä
-	PasswdUpFailed = 1008,  //¸üÐÂÃÜÂëÊ§°Ü
-	PasswdInvalid = 1009,   //ÃÜÂë¸üÐÂÊ§°Ü
+	Error_Json = 1001,  //Jsonï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+	RPCFailed = 1002,  //RPCï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+	VarifyExpired = 1003, //ï¿½ï¿½Ö¤ï¿½ï¿½ï¿½ï¿½ï¿½
+	VarifyCodeErr = 1004, //ï¿½ï¿½Ö¤ï¿½ï¿½ï¿½ï¿½ï¿½
+	UserExist = 1005,       //ï¿½Ã»ï¿½ï¿½Ñ¾ï¿½ï¿½ï¿½ï¿½ï¿½
+	PasswdErr = 1006,    //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+	EmailNotMatch = 1007,  //ï¿½ï¿½ï¿½ä²»Æ¥ï¿½ï¿½
+	PasswdUpFailed = 1008,  //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê§ï¿½ï¿½
+	PasswdInvalid = 1009,   //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê§ï¿½ï¿½
 	TokenInvalid = 1010,   //TokenÊ§Ð§
-	UidInvalid = 1011,  //uidÎÞÐ§
+	UidInvalid = 1011,  //uidï¿½ï¿½Ð§
 };
 
 
-// DeferÀà
+// Deferï¿½ï¿½
 class Defer {
 public:
-	// ½ÓÊÜÒ»¸ölambda±í´ïÊ½»òÕßº¯ÊýÖ¸Õë
+	// ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½lambdaï¿½ï¿½ï¿½ï¿½Ê½ï¿½ï¿½ï¿½ßºï¿½ï¿½ï¿½Ö¸ï¿½ï¿½
 	Defer(std::function<void()> func) : func_(func) {}
 
-	// Îö¹¹º¯ÊýÖÐÖ´ÐÐ´«ÈëµÄº¯Êý
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ö´ï¿½Ð´ï¿½ï¿½ï¿½Äºï¿½ï¿½ï¿½
 	~Defer() {
 		func_();
 	}
@@ -34,19 +34,43 @@ private:
 };
 
 #define MAX_LENGTH  1024*2
-//Í·²¿×Ü³¤¶È
+//Í·ï¿½ï¿½ï¿½Ü³ï¿½ï¿½ï¿½
 #define HEAD_TOTAL_LEN 4
-//Í·²¿id³¤¶È
+//Í·ï¿½ï¿½idï¿½ï¿½ï¿½ï¿½
 #define HEAD_ID_LEN 2
-//Í·²¿Êý¾Ý³¤¶È
+//Í·ï¿½ï¿½ï¿½ï¿½ï¿½Ý³ï¿½ï¿½ï¿½
 #define HEAD_DATA_LEN 2
 #define MAX_RECVQUE  10000
 #define MAX_SENDQUE 1000
 
 
 enum MSG_IDS {
-	MSG_CHAT_LOGIN = 1005, //ÓÃ»§µÇÂ½
-	MSG_CHAT_LOGIN_RSP = 1006, //ÓÃ»§µÇÂ½»Ø°ü
+	MSG_CHAT_LOGIN = 1005, //ï¿½Ã»ï¿½ï¿½ï¿½Â½
+	MSG_CHAT_LOGIN_RSP = 1006, //ï¿½Ã»ï¿½ï¿½ï¿½Â½ï¿½Ø°ï¿½
+	// ç³»ç»Ÿé€šçŸ¥ï¼šè¸¢ä¸‹çº¿ï¼ˆä¸Žå®¢æˆ·ç«¯1021å¯¹é½ï¼‰
+	MSG_NOTIFY_OFFLINE = 1021,
+	// å•èŠæ–‡æœ¬
+	MSG_TEXT_CHAT_MSG_REQ = 1017,
+	MSG_TEXT_CHAT_MSG_RSP = 1018,
+	MSG_NOTIFY_TEXT_CHAT_MSG_REQ = 1019,
+	// ç¾¤èŠæ–‡æœ¬ï¼ˆé¢„ç•™ï¼‰
+	MSG_GROUP_TEXT_MSG_REQ = 1117,
+	MSG_GROUP_TEXT_MSG_RSP = 1118,
+	MSG_NOTIFY_GROUP_TEXT_MSG_REQ = 1119,
+	// æ–‡ä»¶åˆ†ç‰‡ä¸Šä¼ 
+	MSG_FILE_INIT = 2001,
+	MSG_FILE_INIT_RSP = 2002,
+	MSG_FILE_CHUNK = 2003,
+	MSG_FILE_CHUNK_RSP = 2004,
+	MSG_FILE_COMPLETE = 2005,
+	MSG_FILE_COMPLETE_RSP = 2006,
+	// WebRTC ä¿¡ä»¤æŽ§åˆ¶
+	MSG_RTC_CALL = 3001,
+	MSG_RTC_CALL_RSP = 3002,
+	MSG_RTC_OFFER = 3003,
+	MSG_RTC_ANSWER = 3004,
+	MSG_RTC_ICE = 3005,
+	MSG_RTC_HANGUP = 3006,
 };
 
 

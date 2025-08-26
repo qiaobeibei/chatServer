@@ -35,3 +35,10 @@ void CServer::ClearSession(std::string uuid) {
 	lock_guard<mutex> lock(_mutex);
 	_sessions.erase(uuid);
 }
+
+std::shared_ptr<CSession> CServer::FindSession(const std::string& uuid){
+	lock_guard<mutex> lock(_mutex);
+	auto it = _sessions.find(uuid);
+	if (it == _sessions.end()) return nullptr;
+	return it->second;
+}

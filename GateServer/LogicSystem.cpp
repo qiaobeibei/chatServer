@@ -1,17 +1,27 @@
 #include "LogicSystem.h"
 #include "HttpConnection.h"
-#include "VarifyGrpcClient.h"
+#include "VerifyGrpcClient.h"
 #include "RedisMgr.h"
 #include "MysqlMgr.h"
 #include "StatusGrpcClient.h"
 
 LogicSystem::LogicSystem() {
-	// 获取验证码服务
-	RegPost("/get_varifycode", [](std::shared_ptr<HttpConnection> connection) {
+	RegGet("/get_test", [](std::shared_ptr<HttpConnection> connection) {
+		beast::ostream(connection->_response.body()) << "receive get_test req " << std::endl;
+		int i = 0;
+		for (auto& elem : connection->_get_params) {
+			i++;
+			beast::ostream(connection->_response.body()) << "param" << i << " key is " << elem.first;
+			beast::ostream(connection->_response.body()) << ", " <<  " value is " << elem.second << std::endl;
+		}
+
+		connection->_response.set(http::field::content_type, "text/plain");
+	});
+
+	RegPost("/test_procedure", [](std::shared_ptr<HttpConnection> connection) {
 		auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
 		std::cout << "receive body is " << body_str << std::endl;
 		connection->_response.set(http::field::content_type, "text/json");
-
 		Json::Value root;
 		Json::Reader reader;
 		Json::Value src_root;
@@ -33,16 +43,54 @@ LogicSystem::LogicSystem() {
 		}
 
 		auto email = src_root["email"].asString();
-		GetVarifyRsp rsp = VarifyGrpcClient::GetInstance()->GetVarifyCode(email);
-		std::cout << "email is " << email << std::endl;
+		int uid = 0;
+		std::string name = "";
+		MysqlMgr::GetInstance()->TestProcedure(email, uid, name);
+		cout << "email is " << email << endl;
+		root["error"] = ErrorCodes::Success;
+		root["email"] = src_root["email"];
+		root["name"] = name;
+		root["uid"] = uid;
+		std::string jsonstr = root.toStyledString();
+		beast::ostream(connection->_response.body()) << jsonstr;
+		return true;
+		
+	});
+
+	RegPost("/get_varifycode", [](std::shared_ptr<HttpConnection> connection) {
+		auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
+		std::cout << "receive body is " << body_str << std::endl;
+		connection->_response.set(http::field::content_type, "text/json");
+		Json::Value root;
+		Json::Reader reader;
+		Json::Value src_root;
+		bool parse_success = reader.parse(body_str, src_root);
+		if (!parse_success) {
+			std::cout << "Failed to parse JSON data!" << std::endl;
+			root["error"] = ErrorCodes::Error_Json;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+		}
+
+		if (!src_root.isMember("email")) {
+			std::cout << "Failed to parse JSON data!" << std::endl;
+			root["error"] = ErrorCodes::Error_Json;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+		}
+
+		auto email = src_root["email"].asString();
+		GetVarifyRsp rsp = VerifyGrpcClient::GetInstance()->GetVarifyCode(email);
+		cout << "email is " << email << endl;
 		root["error"] = rsp.error();
 		root["email"] = src_root["email"];
 		std::string jsonstr = root.toStyledString();
 		beast::ostream(connection->_response.body()) << jsonstr;
 		return true;
 	});
-
-	// 用户注册服务
+	//day11 注册用户逻辑
 	RegPost("/user_register", [](std::shared_ptr<HttpConnection> connection) {
 		auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
 		std::cout << "receive body is " << body_str << std::endl;
@@ -63,6 +111,7 @@ LogicSystem::LogicSystem() {
 		auto name = src_root["user"].asString();
 		auto pwd = src_root["passwd"].asString();
 		auto confirm = src_root["confirm"].asString();
+		auto icon = src_root["icon"].asString();
 
 		if (pwd != confirm) {
 			std::cout << "password err " << std::endl;
@@ -92,7 +141,7 @@ LogicSystem::LogicSystem() {
 		}
 
 		//查找数据库判断用户是否存在
-		int uid = MysqlMgr::GetInstance()->RegUser(name, email, pwd);
+		int uid = MysqlMgr::GetInstance()->RegUser(name, email, pwd, icon);
 		if (uid == 0 || uid == -1) {
 			std::cout << " user or email exist" << std::endl;
 			root["error"] = ErrorCodes::UserExist;
@@ -106,13 +155,14 @@ LogicSystem::LogicSystem() {
 		root ["user"]= name;
 		root["passwd"] = pwd;
 		root["confirm"] = confirm;
+		root["icon"] = icon;
 		root["varifycode"] = src_root["varifycode"].asString();
 		std::string jsonstr = root.toStyledString();
 		beast::ostream(connection->_response.body()) << jsonstr;
 		return true;
 		});
 
-	// 密码重置服务
+	//重置回调逻辑
 	RegPost("/reset_pwd", [](std::shared_ptr<HttpConnection> connection) {
 		auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
 		std::cout << "receive body is " << body_str << std::endl;
@@ -182,7 +232,7 @@ LogicSystem::LogicSystem() {
 		return true;
 		});
 
-	//用户登录服务
+	//用户登录逻辑
 	RegPost("/user_login", [](std::shared_ptr<HttpConnection> connection) {
 		auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
 		std::cout << "receive body is " << body_str << std::endl;
@@ -244,6 +294,7 @@ void LogicSystem::RegPost(std::string url, HttpHandler handler) {
 }
 
 LogicSystem::~LogicSystem() {
+
 }
 
 bool LogicSystem::HandleGet(std::string path, std::shared_ptr<HttpConnection> con) {

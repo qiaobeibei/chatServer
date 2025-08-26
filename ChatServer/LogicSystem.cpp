@@ -2,116 +2,387 @@
 #include "StatusGrpcClient.h"
 #include "MysqlMgr.h"
 #include "const.h"
+#include "FileUploadManager.h"
+#include "CallManager.h"
+#include "ConfigMgr.h"
+#include "KafkaMgr.h"
+#include "CServer.h"
 
 using namespace std;
 
 LogicSystem::LogicSystem():_b_stop(false){
-	RegisterCallBacks();
-	_worker_thread = std::thread (&LogicSystem::DealMsg, this);
+    // åˆå§‹åŒ–Kafka
+    auto& cfg = ConfigMgr::Inst();
+    bool enableKafka = cfg["Kafka"]["Enable"] == "1";
+    if (enableKafka) {
+        KafkaMgr::Inst().setEnabled(true);
+        KafkaMgr::Inst().init(cfg["Kafka"]["Brokers"], cfg["Kafka"]["Group"]);
+        // å¯åŠ¨æ¶ˆè´¹çº¿ç¨‹ï¼šå°†Kafkaä¸­çš„æ¶ˆæ¯é‡æ–°å…¥æœ¬åœ°é˜Ÿåˆ—å¤„ç†
+        KafkaMgr::Inst().consume(cfg["Kafka"]["TopicIngress"], [this](const std::string& key, const std::string& payload){
+            Json::Value root;
+            Json::Reader reader;
+            if (!reader.parse(payload, root)) return;
+            short msgid = static_cast<short>(root["msgid"].asInt());
+            std::string uuid = root.get("uuid", "").asString();
+            std::string pl = root.get("payload", "").asString();
+            std::shared_ptr<CSession> session = nullptr;
+            if (!uuid.empty() && g_server) {
+                session = g_server->FindSession(uuid);
+            }
+            auto dummy = std::make_shared<RecvNode>((short)pl.size(), msgid);
+            memcpy(dummy->_data, pl.data(), pl.size());
+            EnqueueLocal(std::make_shared<LogicNode>(session, dummy));
+        });
+        // è®¢é˜…æ§åˆ¶ä¸»é¢˜ï¼šè·¨æœè¸¢äººç­‰
+        KafkaMgr::Inst().consume(cfg["Kafka"]["TopicControl"], [this](const std::string& key, const std::string& payload){
+            Json::Value root; Json::Reader reader; if (!reader.parse(payload, root)) return;
+            std::string cmd = root.get("cmd", "").asString();
+            if (cmd == "kick") {
+                int uid = root.get("uid", 0).asInt();
+                // å‘è¯¥ç”¨æˆ·æ‰€æœ‰è¿æ¥å‘é€ä¸‹çº¿é€šçŸ¥ï¼ˆè¿™é‡ŒæŒ‰ uid->session è·¯ç”±ï¼‰
+                auto target = findSessionByUid(uid);
+                if (target) {
+                    Json::Value rsp; rsp["error"] = 0; rsp["uid"] = uid;
+                    target->Send(rsp.toStyledString(), MSG_NOTIFY_OFFLINE);
+                    target->Close();
+                }
+            }
+        });
+    }
+    RegisterCallBacks();
+    _worker_thread = std::thread (&LogicSystem::DealMsg, this);
 }
 
 LogicSystem::~LogicSystem(){
-	_b_stop = true;
-	_consume.notify_one();
-	_worker_thread.join();
+    _b_stop = true;
+    _consume.notify_one();
+    _worker_thread.join();
 }
 
 void LogicSystem::PostMsgToQue(shared_ptr < LogicNode> msg) {
-	std::unique_lock<std::mutex> unique_lk(_mutex);
-	_msg_que.push(msg);
-	//ÓÉ0±äÎª1Ôò·¢ËÍÍ¨ÖªĞÅºÅ
-	if (_msg_que.size() == 1) {
-		unique_lk.unlock();
-		_consume.notify_one();
-	}
+    if (KafkaMgr::Inst().enable()) {
+        // ç”Ÿäº§åˆ° Kafkaï¼šåŒ…å«ä¼šè¯uuidã€msgidã€payload
+        Json::Value wrapper;
+        wrapper["uuid"] = msg->_session ? msg->_session->GetUuid() : "";
+        wrapper["msgid"] = msg->_recvnode->_msg_id;
+        wrapper["payload"] = std::string(msg->_recvnode->_data, msg->_recvnode->_cur_len);
+        Json::FastWriter w;
+        std::string data = w.write(wrapper);
+        KafkaMgr::Inst().produce(ConfigMgr::Inst()["Kafka"]["TopicIngress"], wrapper["uuid"].asString(), data);
+        return;
+    } else {
+        std::unique_lock<std::mutex> unique_lk(_mutex);
+        _msg_que.push(msg);
+        if (_msg_que.size() == 1) {
+            unique_lk.unlock();
+            _consume.notify_one();
+        }
+    }
+}
+
+void LogicSystem::EnqueueLocal(shared_ptr < LogicNode> msg) {
+    std::unique_lock<std::mutex> unique_lk(_mutex);
+    _msg_que.push(msg);
+    if (_msg_que.size() == 1) {
+        unique_lk.unlock();
+        _consume.notify_one();
+    }
 }
 
 void LogicSystem::DealMsg() {
-	for (;;) {
-		std::unique_lock<std::mutex> unique_lk(_mutex);
-		//ÅĞ¶Ï¶ÓÁĞÎª¿ÕÔòÓÃÌõ¼ş±äÁ¿×èÈûµÈ´ı£¬²¢ÊÍ·ÅËø
-		while (_msg_que.empty() && !_b_stop) {
-			_consume.wait(unique_lk);
-		}
+    for (;;) {
+        std::unique_lock<std::mutex> unique_lk(_mutex);
+        //Ğ¶Ï¶ÎªÈ´Í·
+        while (_msg_que.empty() && !_b_stop) {
+            _consume.wait(unique_lk);
+        }
 
-		//ÅĞ¶ÏÊÇ·ñÎª¹Ø±Õ×´Ì¬£¬°ÑËùÓĞÂß¼­Ö´ĞĞÍêºóÔòÍË³öÑ­»·
-		if (_b_stop ) {
-			while (!_msg_que.empty()) {
-				auto msg_node = _msg_que.front();
-				cout << "recv_msg id  is " << msg_node->_recvnode->_msg_id << endl;
-				auto call_back_iter = _fun_callbacks.find(msg_node->_recvnode->_msg_id);
-				if (call_back_iter == _fun_callbacks.end()) {
-					_msg_que.pop();
-					continue;
-				}
-				call_back_iter->second(msg_node->_session, msg_node->_recvnode->_msg_id,
-					std::string(msg_node->_recvnode->_data, msg_node->_recvnode->_cur_len));
-				_msg_que.pop();
-			}
-			break;
-		}
+        //Ğ¶Ç·Îª×¨×´Ì¬ß¼Ö´Ë³Ñ­
+        if (_b_stop ) {
+            while (!_msg_que.empty()) {
+                auto msg_node = _msg_que.front();
+                cout << "recv_msg id  is " << msg_node->_recvnode->_msg_id << endl;
+                auto call_back_iter = _fun_callbacks.find(msg_node->_recvnode->_msg_id);
+                if (call_back_iter == _fun_callbacks.end()) {
+                    _msg_que.pop();
+                    continue;
+                }
+                call_back_iter->second(msg_node->_session, msg_node->_recvnode->_msg_id,
+                    std::string(msg_node->_recvnode->_data, msg_node->_recvnode->_cur_len));
+                _msg_que.pop();
+            }
+            break;
+        }
 
-		//Èç¹ûÃ»ÓĞÍ£·ş£¬ÇÒËµÃ÷¶ÓÁĞÖĞÓĞÊı¾İ
-		auto msg_node = _msg_que.front();
-		cout << "recv_msg id  is " << msg_node->_recvnode->_msg_id << endl;
-		auto call_back_iter = _fun_callbacks.find(msg_node->_recvnode->_msg_id);
-		if (call_back_iter == _fun_callbacks.end()) {
-			_msg_que.pop();
-			std::cout << "msg id [" << msg_node->_recvnode->_msg_id << "] handler not found" << std::endl;
-			continue;
-		}
-		// ¸ù¾İÏûÏ¢ id Ö´ĞĞÏàÓ¦»Øµ÷
-		call_back_iter->second(msg_node->_session, msg_node->_recvnode->_msg_id, 
-			std::string(msg_node->_recvnode->_data, msg_node->_recvnode->_cur_len));
-		_msg_que.pop();
-	}
+        //Ã»Í£Ëµ
+        auto msg_node = _msg_que.front();
+        cout << "recv_msg id  is " << msg_node->_recvnode->_msg_id << endl;
+        auto call_back_iter = _fun_callbacks.find(msg_node->_recvnode->_msg_id);
+        if (call_back_iter == _fun_callbacks.end()) {
+            _msg_que.pop();
+            std::cout << "msg id [" << msg_node->_recvnode->_msg_id << "] handler not found" << std::endl;
+            continue;
+        }
+        // æ ¹æ®æ¶ˆæ¯ id æ‰§è¡Œå¯¹åº”å›è°ƒ
+        call_back_iter->second(msg_node->_session, msg_node->_recvnode->_msg_id, 
+            std::string(msg_node->_recvnode->_data, msg_node->_recvnode->_cur_len));
+        _msg_que.pop();
+    }
 }
 
 void LogicSystem::RegisterCallBacks() {
-	_fun_callbacks[MSG_CHAT_LOGIN] = std::bind(&LogicSystem::LoginHandler, this,
-		placeholders::_1, placeholders::_2, placeholders::_3);
+    _fun_callbacks[MSG_CHAT_LOGIN] = std::bind(&LogicSystem::LoginHandler, this,
+        placeholders::_1, placeholders::_2, placeholders::_3);
+    // æ–‡ä»¶ä¸Šä¼ 
+    _fun_callbacks[MSG_FILE_INIT] = std::bind(&LogicSystem::FileInitHandler, this,
+        placeholders::_1, placeholders::_2, placeholders::_3);
+    _fun_callbacks[MSG_FILE_CHUNK] = std::bind(&LogicSystem::FileChunkHandler, this,
+        placeholders::_1, placeholders::_2, placeholders::_3);
+    _fun_callbacks[MSG_FILE_COMPLETE] = std::bind(&LogicSystem::FileCompleteHandler, this,
+        placeholders::_1, placeholders::_2, placeholders::_3);
+    // WebRTC ä¿¡ä»¤
+    _fun_callbacks[MSG_RTC_CALL] = std::bind(&LogicSystem::RtcCallHandler, this,
+        placeholders::_1, placeholders::_2, placeholders::_3);
+    _fun_callbacks[MSG_RTC_OFFER] = std::bind(&LogicSystem::RtcOfferHandler, this,
+        placeholders::_1, placeholders::_2, placeholders::_3);
+    _fun_callbacks[MSG_RTC_ANSWER] = std::bind(&LogicSystem::RtcAnswerHandler, this,
+        placeholders::_1, placeholders::_2, placeholders::_3);
+    _fun_callbacks[MSG_RTC_ICE] = std::bind(&LogicSystem::RtcIceHandler, this,
+        placeholders::_1, placeholders::_2, placeholders::_3);
+    _fun_callbacks[MSG_RTC_HANGUP] = std::bind(&LogicSystem::RtcHangupHandler, this,
+        placeholders::_1, placeholders::_2, placeholders::_3);
+    // å•èŠä¸ç¾¤èŠ
+    _fun_callbacks[MSG_TEXT_CHAT_MSG_REQ] = std::bind(&LogicSystem::TextChatHandler, this,
+        placeholders::_1, placeholders::_2, placeholders::_3);
+    _fun_callbacks[MSG_GROUP_TEXT_MSG_REQ] = std::bind(&LogicSystem::GroupTextChatHandler, this,
+        placeholders::_1, placeholders::_2, placeholders::_3);
 }
 
-// ÓÃ»§µÇÂ¼»Øµ÷
+// ç”¨æˆ·ç™»å½•å›è°ƒ
 void LogicSystem::LoginHandler(shared_ptr<CSession> session, const short &msg_id, const string &msg_data) {
-	Json::Reader reader;
-	Json::Value root;
-	reader.parse(msg_data, root);
-	auto uid = root["uid"].asInt();
-	std::cout << "user login uid is  " << uid << " user token  is "
-		<< root["token"].asString() << endl;
+    Json::Reader reader;
+    Json::Value root;
+    reader.parse(msg_data, root);
+    auto uid = root["uid"].asInt();
+    std::cout << "user login uid is  " << uid << " user token  is "
+        << root["token"].asString() << endl;
 
-	//´Ó×´Ì¬·şÎñÆ÷»ñÈ¡tokenÆ¥ÅäÊÇ·ñ×¼È·
-	auto rsp = StatusGrpcClient::GetInstance()->Login(uid, root["token"].asString());
-	Json::Value  rtvalue;
-	Defer defer([this, &rtvalue, session]() {
-		std::string return_str = rtvalue.toStyledString();
-		session->Send(return_str, MSG_CHAT_LOGIN_RSP);
-	});
+    //çŠ¶æ€æœåŠ¡æ ¡éªŒtokenæ˜¯å¦å‡†ç¡®
+    auto rsp = StatusGrpcClient::GetInstance()->Login(uid, root["token"].asString());
+    Json::Value  rtvalue;
+    Defer defer([this, &rtvalue, session]() {
+        std::string return_str = rtvalue.toStyledString();
+        session->Send(return_str, MSG_CHAT_LOGIN_RSP);
+    });
 
-	rtvalue["error"] = rsp.error();
-	if (rsp.error() != ErrorCodes::Success) {
-		return;
-	}
+    rtvalue["error"] = rsp.error();
+    if (rsp.error() != ErrorCodes::Success) {
+        return;
+    }
 
-	//ÄÚ´æÖĞ²éÑ¯ÓÃ»§ĞÅÏ¢
-	auto find_iter = _users.find(uid);
-	std::shared_ptr<UserInfo> user_info = nullptr;
-	if (find_iter == _users.end()) {
-		//ÄÚ´æÖĞÈôÃ»ÕÒµ½£¬Ôò²éÑ¯Êı¾İ¿â
-		user_info = MysqlMgr::GetInstance()->GetUser(uid);
-		if (user_info == nullptr) {
-			rtvalue["error"] = ErrorCodes::UidInvalid;
-			return;
-		}
+    //å†…å­˜æŸ¥è¯¢ç”¨æˆ·ä¿¡æ¯
+    auto find_iter = _users.find(uid);
+    std::shared_ptr<UserInfo> user_info = nullptr;
+    if (find_iter == _users.end()) {
+        //æŸ¥è¯¢æ•°æ®åº“
+        user_info = MysqlMgr::GetInstance()->GetUser(uid);
+        if (user_info == nullptr) {
+            rtvalue["error"] = ErrorCodes::UidInvalid;
+            return;
+        }
 
-		_users[uid] = user_info;
-	}
-	else {
-		user_info = find_iter->second;
-	}
+        _users[uid] = user_info;
+    }
+    else {
+        user_info = find_iter->second;
+    }
 
-	rtvalue["uid"] = uid;
-	rtvalue["token"] = rsp.token();
-	rtvalue["name"] = user_info->name;
+    rtvalue["uid"] = uid;
+    rtvalue["token"] = rsp.token();
+    rtvalue["name"] = user_info->name;
+    // ç»‘å®š uid -> session
+    bindUidSession(uid, session);
+}
+
+// ç®€æ˜“base64è§£ç ï¼ˆä»…ç”¨äºåˆ†ç‰‡æ•°æ®ç¤ºä¾‹ï¼‰
+static inline unsigned char b64_index(char c){
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return 255;
+}
+static std::string base64_decode(const std::string &in){
+    std::string out;
+    size_t len = in.size();
+    int val = 0, valb = -8;
+    for (size_t i=0;i<len;i++){
+        unsigned char c = b64_index(in[i]);
+        if (in[i] == '=') break;
+        if (c == 255) continue;
+        val = (val<<6) + c;
+        valb += 6;
+        if (valb >= 0){
+            out.push_back(char((val>>valb)&0xFF));
+            valb -= 8;
+        }
+    }
+    return out;
+}
+
+void LogicSystem::FileInitHandler(shared_ptr<CSession> session, const short &msg_id, const string &msg_data){
+    Json::Reader reader; Json::Value req; reader.parse(msg_data, req);
+    Json::Value rsp;
+    std::string err;
+    bool ok = FileUploadManager::Inst().initTask(
+        req["fileId"].asString(),
+        req["fileName"].asString(),
+        req.get("dir", "uploads").asString(),
+        req.get("totalSize", 0).asUInt64(),
+        req.get("totalChunks", 0).asUInt(),
+        err
+    );
+    rsp["error"] = ok ? 0 : 1;
+    if (!ok) rsp["msg"] = err;
+    std::string body = rsp.toStyledString();
+    session->Send(body, MSG_FILE_INIT_RSP);
+}
+
+void LogicSystem::FileChunkHandler(shared_ptr<CSession> session, const short &msg_id, const string &msg_data){
+    Json::Reader reader; Json::Value req; reader.parse(msg_data, req);
+    FileChunkMeta meta;
+    meta.fileId = req["fileId"].asString();
+    meta.fileName = req["fileName"].asString();
+    meta.targetDir = req.get("dir", "uploads").asString();
+    meta.totalSize = req.get("totalSize", 0).asUInt64();
+    meta.totalChunks = req.get("totalChunks", 0).asUInt();
+    meta.index = req.get("index", 0).asUInt();
+    if (req.isMember("data_b64")) {
+        meta.data = base64_decode(req["data_b64"].asString());
+    } else if (req.isMember("data")) {
+        meta.data = req["data"].asString();
+    }
+    FileUploadManager::Inst().submitChunk(meta);
+    Json::Value rsp; rsp["error"] = 0; rsp["fileId"] = meta.fileId; rsp["index"] = meta.index;
+    session->Send(rsp.toStyledString(), MSG_FILE_CHUNK_RSP);
+}
+
+void LogicSystem::FileCompleteHandler(shared_ptr<CSession> session, const short &msg_id, const string &msg_data){
+    Json::Reader reader; Json::Value req; reader.parse(msg_data, req);
+    Json::Value rsp; rsp["error"] = 0; rsp["fileId"] = req["fileId"].asString();
+    session->Send(rsp.toStyledString(), MSG_FILE_COMPLETE_RSP);
+}
+
+// å•èŠæ–‡æœ¬
+void LogicSystem::TextChatHandler(shared_ptr<CSession> session, const short &msg_id, const string &msg_data){
+    Json::Reader reader; Json::Value req; if (!reader.parse(msg_data, req)) return;
+    int fromuid = req.get("fromuid", 0).asInt();
+    int touid = req.get("touid", 0).asInt();
+    // å›å¤å‘é€ç«¯å—ç†
+    {
+        Json::Value rsp; rsp["error"] = 0; rsp["touid"] = touid;
+        session->Send(rsp.toStyledString(), MSG_TEXT_CHAT_MSG_RSP);
+    }
+    // é€šçŸ¥æ¥æ”¶ç«¯
+    Json::Value notify = req; notify["error"] = 0;
+    forwardToUid(touid, MSG_NOTIFY_TEXT_CHAT_MSG_REQ, notify);
+}
+
+// ç¾¤èŠæ–‡æœ¬ï¼ˆæœ€å°å®ç°ï¼šè¯·æ±‚å†…å¸¦ members åˆ—è¡¨ï¼‰
+void LogicSystem::GroupTextChatHandler(shared_ptr<CSession> session, const short &msg_id, const string &msg_data){
+    Json::Reader reader; Json::Value req; if (!reader.parse(msg_data, req)) return;
+    int groupid = req.get("groupid", 0).asInt();
+    // å›å¤å‘é€ç«¯å—ç†
+    {
+        Json::Value rsp; rsp["error"] = 0; rsp["groupid"] = groupid;
+        session->Send(rsp.toStyledString(), MSG_GROUP_TEXT_MSG_RSP);
+    }
+    // å¹¿æ’­åˆ°æˆå‘˜ï¼ˆè¯·æ±‚éœ€åŒ…å« members: [uid,...]ï¼‰ï¼Œåç»­å¯ç”¨DB/RedisæŸ¥è¯¢ç¾¤æˆå‘˜
+    if (req.isMember("members") && req["members"].isArray()) {
+        for (auto &mem : req["members"]) {
+            int uid = mem.asInt();
+            Json::Value notify = req; notify["error"] = 0;
+            forwardToUid(uid, MSG_NOTIFY_GROUP_TEXT_MSG_REQ, notify);
+        }
+    }
+}
+
+void LogicSystem::bindUidSession(int uid, std::shared_ptr<CSession> session){
+    std::lock_guard<std::mutex> g(_mutex);
+    _uid_sessions[uid] = session;
+}
+
+std::shared_ptr<CSession> LogicSystem::findSessionByUid(int uid){
+    std::lock_guard<std::mutex> g(_mutex);
+    auto it = _uid_sessions.find(uid);
+    if (it == _uid_sessions.end()) return nullptr;
+    return it->second.lock();
+}
+
+bool LogicSystem::forwardToUid(int toUid, short msgId, const Json::Value &payload){
+    auto target = findSessionByUid(toUid);
+    if (!target) return false;
+    target->Send(payload.toStyledString(), msgId);
+    return true;
+}
+
+void LogicSystem::RtcCallHandler(shared_ptr<CSession> session, const short &msg_id, const string &msg_data){
+    Json::Reader reader; Json::Value req; reader.parse(msg_data, req);
+    int from = req.get("from", 0).asInt();
+    int to = req["to"].asInt();
+    const char* reason = nullptr;
+    Json::Value rsp;
+    if (!CallManager::Inst().canCall(from, to, &reason)) {
+        rsp["error"] = 1; rsp["msg"] = reason ? reason : "busy"; rsp["to"] = to;
+        session->Send(rsp.toStyledString(), MSG_RTC_CALL_RSP);
+        return;
+    }
+    CallManager::Inst().startRinging(from, to);
+    if (!forwardToUid(to, MSG_RTC_CALL, req)) {
+        // å¯¹æ–¹ä¸åœ¨çº¿ï¼Œå›æ»šçŠ¶æ€
+        CallManager::Inst().hangup(from);
+        rsp["error"] = 2; rsp["msg"] = "peer offline"; rsp["to"] = to;
+        session->Send(rsp.toStyledString(), MSG_RTC_CALL_RSP);
+        return;
+    }
+    rsp["error"] = 0; rsp["to"] = to;
+    session->Send(rsp.toStyledString(), MSG_RTC_CALL_RSP);
+}
+
+void LogicSystem::RtcOfferHandler(shared_ptr<CSession> session, const short &msg_id, const string &msg_data){
+    Json::Reader reader; Json::Value req; reader.parse(msg_data, req);
+    int from = req.get("from", 0).asInt();
+    int to = req["to"].asInt();
+    // ä»…è½¬å‘ï¼ŒçŠ¶æ€å·²åœ¨ CallManager ç®¡æ§
+    forwardToUid(to, MSG_RTC_OFFER, req);
+}
+
+void LogicSystem::RtcAnswerHandler(shared_ptr<CSession> session, const short &msg_id, const string &msg_data){
+    Json::Reader reader; Json::Value req; reader.parse(msg_data, req);
+    int from = req.get("from", 0).asInt();
+    int to = req["to"].asInt();
+    const char* reason = nullptr;
+    if (!CallManager::Inst().accept(from, to, &reason)) {
+        Json::Value rsp; rsp["error"] = 1; rsp["msg"] = reason ? reason : "accept failed"; rsp["to"] = to;
+        session->Send(rsp.toStyledString(), MSG_RTC_CALL_RSP);
+        return;
+    }
+    forwardToUid(to, MSG_RTC_ANSWER, req);
+}
+
+void LogicSystem::RtcIceHandler(shared_ptr<CSession> session, const short &msg_id, const string &msg_data){
+    Json::Reader reader; Json::Value req; reader.parse(msg_data, req);
+    int to = req["to"].asInt();
+    forwardToUid(to, MSG_RTC_ICE, req);
+}
+
+void LogicSystem::RtcHangupHandler(shared_ptr<CSession> session, const short &msg_id, const string &msg_data){
+    Json::Reader reader; Json::Value req; reader.parse(msg_data, req);
+    int from = req.get("from", 0).asInt();
+    const char* reason = nullptr;
+    int peer = CallManager::Inst().hangup(from, &reason);
+    if (peer != -1) {
+        forwardToUid(peer, MSG_RTC_HANGUP, req);
+    }
 }

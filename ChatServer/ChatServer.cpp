@@ -11,6 +11,8 @@ bool bstop = false;
 std::condition_variable cond_quit;
 std::mutex mutex_quit;
 
+CServer* g_server = nullptr;
+
 int main()
 {
     try {
@@ -24,6 +26,7 @@ int main()
             });
         auto port_str = cfg["SelfServer"]["Port"];
         CServer s(io_context, atoi(port_str.c_str()));
+        g_server = &s;
         io_context.run();
     }
     catch (std::exception& e) {
