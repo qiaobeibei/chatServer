@@ -60,6 +60,7 @@ void LogicSystem::DealMsg() {
 			std::cout << "msg id [" << msg_node->_recvnode->_msg_id << "] handler not found" << std::endl;
 			continue;
 		}
+		// 根据消息 id 执行相应回调
 		call_back_iter->second(msg_node->_session, msg_node->_recvnode->_msg_id, 
 			std::string(msg_node->_recvnode->_data, msg_node->_recvnode->_cur_len));
 		_msg_que.pop();
@@ -71,6 +72,7 @@ void LogicSystem::RegisterCallBacks() {
 		placeholders::_1, placeholders::_2, placeholders::_3);
 }
 
+// 用户登录回调
 void LogicSystem::LoginHandler(shared_ptr<CSession> session, const short &msg_id, const string &msg_data) {
 	Json::Reader reader;
 	Json::Value root;
@@ -78,6 +80,7 @@ void LogicSystem::LoginHandler(shared_ptr<CSession> session, const short &msg_id
 	auto uid = root["uid"].asInt();
 	std::cout << "user login uid is  " << uid << " user token  is "
 		<< root["token"].asString() << endl;
+
 	//从状态服务器获取token匹配是否准确
 	auto rsp = StatusGrpcClient::GetInstance()->Login(uid, root["token"].asString());
 	Json::Value  rtvalue;
@@ -95,7 +98,7 @@ void LogicSystem::LoginHandler(shared_ptr<CSession> session, const short &msg_id
 	auto find_iter = _users.find(uid);
 	std::shared_ptr<UserInfo> user_info = nullptr;
 	if (find_iter == _users.end()) {
-		//查询数据库
+		//内存中若没找到，则查询数据库
 		user_info = MysqlMgr::GetInstance()->GetUser(uid);
 		if (user_info == nullptr) {
 			rtvalue["error"] = ErrorCodes::UidInvalid;

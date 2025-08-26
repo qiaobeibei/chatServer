@@ -103,7 +103,7 @@ void HttpConnection::PreParseGetParam() {
 		auto pair = query_string.substr(0, pos);
 		size_t eq_pos = pair.find('=');
 		if (eq_pos != std::string::npos) {
-			key = UrlDecode(pair.substr(0, eq_pos)); // 假设有 url_decode 函数来处理URL解码  
+			key = UrlDecode(pair.substr(0, eq_pos)); // 处理URL解码  
 			value = UrlDecode(pair.substr(eq_pos + 1));
 			_get_params[key] = value;
 		}

@@ -46,7 +46,7 @@ LoginRsp StatusGrpcClient::Login(int uid, std::string token)
 StatusGrpcClient::StatusGrpcClient()
 {
 	auto& gCfgMgr = ConfigMgr::Inst();
-	std::string host = gCfgMgr["StatusServer"]["Host"];
-	std::string port = gCfgMgr["StatusServer"]["Port"];
+	std::string host = gCfgMgr["StatusServer"]["Host"]; // 127.0.0.1
+	std::string port = gCfgMgr["StatusServer"]["Port"]; // 5001
 	pool_.reset(new StatusConPool(5, host, port));
 }

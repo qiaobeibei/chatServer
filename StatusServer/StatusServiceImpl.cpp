@@ -18,12 +18,32 @@ std::string generate_unique_string() {
 Status StatusServiceImpl::GetChatServer(ServerContext* context, const GetChatServerReq* request, GetChatServerRsp* reply)
 {
 	std::string prefix("llfc status server has received :  ");
-	const auto& server = getChatServer();
+	const auto& server = getChatServer(); // server连接数量最小的服务器
 	reply->set_host(server.host);
 	reply->set_port(server.port);
 	reply->set_error(ErrorCodes::Success);
 	reply->set_token(generate_unique_string());
 	insertToken(request->uid(), reply->token());
+	return Status::OK;
+}
+
+Status StatusServiceImpl::Login(ServerContext* context, const LoginReq* request, LoginRsp* reply)
+{
+	auto uid = request->uid();
+	auto token = request->token();
+	std::lock_guard<std::mutex> guard(_token_mtx);
+	auto iter = _tokens.find(uid);
+	if (iter == _tokens.end()) {
+		reply->set_error(ErrorCodes::UidInvalid);
+		return Status::OK;
+	}
+	if (iter->second != token) {
+		reply->set_error(ErrorCodes::TokenInvalid);
+		return Status::OK;
+	}
+	reply->set_error(ErrorCodes::Success);
+	reply->set_uid(uid);
+	reply->set_token(token);
 	return Status::OK;
 }
 
@@ -55,32 +75,12 @@ StatusServiceImpl::StatusServiceImpl()
 
 }
 
+// 返回server连接数量最小的服务器
 ChatServer StatusServiceImpl::getChatServer() {
 	std::lock_guard<std::mutex> guard(_server_mtx);
 	auto minServer = _servers.begin()->second;
-	auto count_str = RedisMgr::GetInstance()->HGet(LOGIN_COUNT, minServer.name); // 判断 server 连接的数量
-	if (count_str.empty()) {
-		//不存在则默认设置为最大
-		minServer.con_count = INT_MAX;
-	}
-	else {
-		minServer.con_count = std::stoi(count_str);
-	}
-
 	// 使用范围基于for循环
-	for ( auto& server : _servers) {
-		if (server.second.name == minServer.name) {
-			continue;
-		}
-
-		auto count_str = RedisMgr::GetInstance()->HGet(LOGIN_COUNT, server.second.name);
-		if (count_str.empty()) {
-			server.second.con_count = INT_MAX;
-		}
-		else {
-			server.second.con_count = std::stoi(count_str);
-		}
-
+	for (const auto& server : _servers) {
 		if (server.second.con_count < minServer.con_count) {
 			minServer = server.second;
 		}
@@ -91,8 +91,7 @@ ChatServer StatusServiceImpl::getChatServer() {
 
 void StatusServiceImpl::insertToken(int uid, std::string token)
 {
-	std::string uid_str = std::to_string(uid);
-	std::string token_key = USERTOKENPREFIX + uid_str;
-	RedisMgr::GetInstance()->Set(token_key, token);
+	std::lock_guard<std::mutex> guard(_token_mtx);
+	_tokens[uid] = token; // 放入内存
 }
 
